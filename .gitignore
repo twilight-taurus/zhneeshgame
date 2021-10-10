@@ -1,0 +1,6 @@
+/target
+/dist
+/pkg
+/bullshit
+*.lock
+*.txt

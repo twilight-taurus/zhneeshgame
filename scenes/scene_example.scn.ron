@@ -1,0 +1,103 @@
+[
+  (
+    entity: 0,
+    components: [
+      {
+        "type": "bevy_render::camera::camera::Camera",
+        "struct": {
+          "projection_matrix": {
+            "type": "glam::mat4::Mat4",
+            "value": (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+          },
+          "name": {
+            "type": "core::option::Option<alloc::string::String>",
+            "value": Some("CameraUi"),
+          },
+        },
+      },
+      {
+        "type": "bevy_render::camera::projection::OrthographicProjection",
+        "struct": {
+          "left": {
+            "type": "f32",
+            "value": -1.0,
+          },
+          "right": {
+            "type": "f32",
+            "value": 1.0,
+          },
+          "bottom": {
+            "type": "f32",
+            "value": -1.0,
+          },
+          "top": {
+            "type": "f32",
+            "value": 1.0,
+          },
+          "near": {
+            "type": "f32",
+            "value": 0.0,
+          },
+          "far": {
+            "type": "f32",
+            "value": 1000.0,
+          },
+          "window_origin": {
+            "type": "bevy_render::camera::projection::WindowOrigin",
+            "value": BottomLeft,
+          },
+          "scaling_mode": {
+            "type": "bevy_render::camera::projection::ScalingMode",
+            "value": WindowSize,
+          },
+          "scale": {
+            "type": "f32",
+            "value": 1.0,
+          },
+          "depth_calculation": {
+            "type": "bevy_render::camera::camera::DepthCalculation",
+            "value": ZDifference,
+          },
+        },
+      },
+      {
+        "type": "bevy_render::camera::visible_entities::VisibleEntities",
+        "struct": {},
+      },
+      {
+        "type": "bevy_transform::components::transform::Transform",
+        "struct": {
+          "translation": {
+            "type": "glam::vec3::Vec3",
+            "value": (0.0, 0.0, 999.9),
+          },
+          "rotation": {
+            "type": "glam::quat::Quat",
+            "value": (0.0, 0.0, 0.0, 1.0),
+          },
+          "scale": {
+            "type": "glam::vec3::Vec3",
+            "value": (1.0, 1.0, 1.0),
+          },
+        },
+      },
+      {
+        "type": "bevy_transform::components::global_transform::GlobalTransform",
+        "struct": {
+          "translation": {
+            "type": "glam::vec3::Vec3",
+            "value": (0.0, 0.0, 0.0),
+          },
+          "rotation": {
+            "type": "glam::quat::Quat",
+            "value": (0.0, 0.0, 0.0, 1.0),
+          },
+          "scale": {
+            "type": "glam::vec3::Vec3",
+            "value": (1.0, 1.0, 1.0),
+          },
+        },
+      },
+    ],
+  ),
+]
