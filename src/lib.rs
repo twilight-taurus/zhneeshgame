@@ -10,6 +10,7 @@ use bevy::prelude::*;
 
 use bevy::reflect::TypeRegistry;
 use bevy::asset::LoadState;
+use bevy::render::camera::OrthographicProjection;
 use bevy::sprite::TextureAtlasBuilder;
 // inputs
 use bevy::input::{ ElementState, keyboard::KeyCode, keyboard::KeyboardInput, Input};
@@ -86,7 +87,9 @@ const TIME_STEP: f32 = 1. / 60.;
 // variable accessed by javascript keydown eventhandler continuously
 // to check if and what game object has been 'accessed' by player.
 
+#[cfg(target_arch = "wasm32")]
 static mut PAGE_ID : GateIdentifier = GateIdentifier::None;
+
 static WAIT_TIME: u64 = 2;
 
 
@@ -114,6 +117,7 @@ enum MovementDir {
     MovementDownRight
 }
 
+#[cfg(target_arch = "wasm32")]
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 enum GateIdentifier {
     None = 3000,
@@ -184,6 +188,7 @@ struct AtlasHandles {
 }
 
 // holding tl and br points of all instantiated objects(excluding player)
+#[cfg(target_arch = "wasm32")]
 #[derive(Default)]
 struct Points {                    //topleft, bottomright
     hash_map: HashMap<GateIdentifier, (Vec3, Vec3)>,
@@ -331,6 +336,10 @@ enum Allegiance {
 
 // Marker Components (empty structs, useful with query filters)
 #[derive(Debug)]
+struct Camera2d;
+#[derive(Debug)]
+struct CameraUi;
+#[derive(Debug)]
 struct InGameUi;
 #[derive(Debug)]
 struct MainMenuUi;
@@ -405,6 +414,12 @@ struct StructureBundle {
     sprite: SpriteBundle  
 }
 
+#[derive(Bundle)]
+struct Camera2dBundle {
+    query_marker: Camera2d,
+    #[bundle]
+    ortho_bundle: OrthographicCameraBundle
+}
 
 #[derive(Bundle)]
 struct InGameUiBundle {
@@ -451,20 +466,24 @@ struct MainMenuUiBundle {
 pub fn run() {
     let mut app = App::build();
     app.init_resource::<Timers>()
-        .init_resource::<Points>()
+//        .init_resource::<Points>()
         .init_resource::<ActionDesc>()
         .init_resource::<SpriteHandles>()
         .init_resource::<AtlasHandles>()
         .init_resource::<Vec<MovementDir>>()
         .insert_resource(WindowDescriptor {
-            title: "Frustrado!".to_string(),
+            title: "Zhneeshgame!".to_string(),
             width: WIN_WIDTH,
             height: WIN_HEIGHT,
             resizable: false,
             ..Default::default()
         })
         .insert_resource(
-            ClearColor( Color::rgba(0.4, 1.0, 0.8, 0.1)) );
+            ClearColor( Color::rgba(0.4, 1.0, 0.8, 0.1)) 
+        )
+        .insert_resource(
+                    Gravity::from(Vec3::new(0.0, -1.81, 0.0))
+        );
 
     // plugins start
     app.add_plugins(DefaultPlugins);
@@ -477,7 +496,6 @@ pub fn run() {
     app.add_plugin( FrameTimeDiagnosticsPlugin::default() );
     // plugins end
     app.add_state(AppState::Load)
-//        .register_type::<ComponentB>()
     // system only runs in load state
         .add_system_set(
             SystemSet::on_enter(AppState::Load)
@@ -504,6 +522,7 @@ pub fn run() {
             SystemSet::on_update(AppState::Ready)
                 .with_system(player_input.system().label("input") )
                 .with_system(player_animation.system().after("input") )
+                .with_system(camera_input.system())
         )
         .run();
 }
@@ -511,6 +530,7 @@ pub fn run() {
 ////////////////////////////////////////
 // externally linked function (javascript)
 ////////////////////////////////////////
+#[cfg(target_arch = "wasm32")]
 pub fn link_established() -> u8 {
     unsafe {
         let ret: u8 = (PAGE_ID as u8);
@@ -591,7 +611,17 @@ fn init_camera(
     // ui camera
     commands.spawn_bundle(UiCameraBundle::default());
     // orthographic camera for perspective, clipping, etc
-    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+    commands.spawn_bundle(Camera2dBundle {
+        query_marker: Camera2d,
+        ortho_bundle: OrthographicCameraBundle::new_2d()
+    })
+    .insert(
+        RigidBody::Dynamic
+    )
+    .insert(
+        Velocity::from_linear(Vec3::X * 0.0)
+    );
+//    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
     println!("Init cameras!");
 }
 
@@ -962,23 +992,6 @@ fn check_textures(
             println!("Loading of player textures is finished!");
         }
 
-/* 
-        if let LoadState::Loaded = 
-            asset_server.get_load_state(sprite_handles.background.id) 
-        {
-            finished_background = true;
-            println!("Loading of background texture is finished!");
-        }
-*/
-
-/* 
-        if let LoadState::Loaded =
-            asset_server.get_group_load_state(sprite_handles.player.iter().map(|handle| handle.id))
-        {
-            finished_player = true;
-            println!("Loading of player textures is finished!");
-        }
-*/
         if let LoadState::Loaded =
             asset_server.get_group_load_state(sprite_handles.grass.iter().map(|handle| handle.id))
         {
@@ -1172,7 +1185,6 @@ fn init_player(
             },
             sprite_sheet: SpriteSheetBundle {
                 texture_atlas: atlas_handles.player.get(&AnimState::Idle).unwrap().clone(),
-//          transform: Transform::from_scale(Vec3::splat(6.0)),
                 transform: Transform {
                     translation: Vec3::new( -TILE_UNIT_TRANSLATION*24.0, 0.0, 1.0 ),
                     scale: Vec3::new(effective_scale_x, effective_scale_y, 1.0),
@@ -1237,7 +1249,6 @@ fn init_objects(
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut textures: ResMut<Assets<Texture>>,
     handles: Res<SpriteHandles>,
-    mut points: ResMut<Points> // holding tl and br points of all instantiated objects(excluding player)
 )   {
 
         // ?TODO? : load all required textures in load_ressources, then use AssetEvent here
@@ -1321,7 +1332,9 @@ fn init_objects(
         point_tl = point_tl + (Vec3::new( 0.0, ((height * effective_scale_y) / 2.0), 0.0));
         point_br = translation + (Vec3::new( ((width * effective_scale_x) / 2.0), 0.0, 0.0));
         point_br = point_br - (Vec3::new( 0.0, ((height * effective_scale_y) / 2.0), 0.0));
-        points.hash_map.insert( GateIdentifier::Blog, (point_tl, point_br) );
+
+//        [cfg(target_arch = "wasm32")]
+//        points.hash_map.insert( GateIdentifier::Blog, (point_tl, point_br) );
 
         // pond/lake (no collisions for now)
         commands
@@ -1342,6 +1355,11 @@ fn init_objects(
                 ..Default::default()
             });
 
+        /*
+
+            TODO: platforms, obstacles, dynamic objects, etc. here.
+
+        */
 /*
             .insert( CollisionShape::Cuboid {
                 half_extends: Vec3::new( (width / 2.0), (height / 2.0), 1.0),
@@ -1358,7 +1376,7 @@ fn player_input(
     mut atlas_handles: Res<AtlasHandles>,
     keys: Res<Input<KeyCode>>,
     mut query: Query<( Option<&Player>, &mut AnimStateTuple, &mut Transform, Option<&mut Velocity>, &mut TextureAtlasSprite, &mut Handle<TextureAtlas> )>,
-    points: Res<Points>,
+//    points: Res<Points>,
     mut timers: ResMut<Timers>
 )   {
         let mut moving: bool = false;
@@ -1561,11 +1579,59 @@ fn player_input(
 }
 
 fn camera_input(
-    mut query: Query<(Option<&Player>, &mut TextureAtlasSprite, &Handle<TextureAtlas>)>,
+    mut query: Query<(Option<&Player>, Option<&Camera2d>, &mut Transform, Option<&mut OrthographicProjection>, &mut Velocity)>,
 )   {
+        // take reference of camera and player pos from the query.
+        let mut camera_transform: Option<Mut<Transform>> = None;
+        let mut camera_proj: Option<Mut<OrthographicProjection>> = None;
+        let mut player_transform : Option<Mut<Transform>> = None;
+        let mut camera_velocity: Option<Mut<Velocity>> = None;
+
+        // TODO: if camera reaches a certain point (left<->right), move camera.
+        for (opt_player, camera, mut transform, mut proj, mut velocity) in query.iter_mut() {
+            if let Some(player) = opt_player {
+                player_transform = Some(transform);
+            } else if let Some(cam) = camera {
+                camera_transform = Some(transform);
+                camera_proj = proj; 
+                camera_velocity = Some(velocity);
+            }
+        }
+
+        // closures are awesome.
+        let mut cam_transform = camera_transform.unwrap();
+        let cam_proj= camera_proj.unwrap();
+        let p_transform = player_transform.unwrap();
+        let mut cam_velocity = camera_velocity.unwrap();
+
+        if (p_transform.translation * Vec3::X) > 
+                (cam_transform.translation * Vec3::X + Vec3::new(cam_proj.right - 50.0, 0.0, 0.0).abs()) 
+        {
+            // apply velocity to camera until it is centered.
+                cam_velocity.linear = Vec3::new(100.0, 0.0, 0.0);
+
+        } else if p_transform.translation * Vec3::X <
+                    (cam_transform.translation * Vec3::X - Vec3::new(cam_proj.left + 50.0, 0.0, 0.0).abs()) {
+
+            // apply velocity to camera until it is centered.
+            cam_velocity.linear = Vec3::new(-100.0, 0.0, 0.0);
+        }
+
+        // camera is adjusting
+        if cam_velocity.linear * Vec3::X > Vec3::new(0.0, 0.0, 0.0) {
+            // camera has reached horizontal center. stop.
+            if cam_transform.translation * Vec3::X >= p_transform.translation * Vec3::X {
+                cam_velocity.linear = Vec3::new(0.0, 0.0, 0.0);
+            }
+        } else if cam_velocity.linear * Vec3::X < Vec3::new(0.0, 0.0, 0.0) {
+            // cameras has reached horizontal center. stop.
+            if cam_transform.translation * Vec3::X <= p_transform.translation * Vec3::X {
+                cam_velocity.linear = Vec3::new(0.0, 0.0, 0.0);
+            }
+        }
+
 
 }
-
 
 // both player and hostile projectiles.
 fn projectile_manager(
@@ -1573,7 +1639,6 @@ fn projectile_manager(
     mut actions: ResMut<ActionDesc>,
     keys: Res<Input<KeyCode>>,
     mut query: Query<(Option<&Player>, &mut TextureAtlasSprite, &Handle<TextureAtlas>)>,
-    points: Res<Points>,
     texture_atlases: Res<Assets<TextureAtlas>>,
     mut timers: ResMut<Timers>
 )   {
