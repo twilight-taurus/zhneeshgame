@@ -156,6 +156,14 @@ enum TileType {
     GrassBottomleft,
     GrassBottomright,
 }
+
+#[derive(PartialEq, Eq, Hash, Copy, Clone)]
+enum StaticEntityId {
+    Player,
+    Boss,
+    CameraUi,
+    Camera2d,
+}
 //////////////////////////////
 // Global consts/vars end 
 //////////////////////////////
@@ -175,6 +183,11 @@ struct Timers {
 //    anim_idle_timer: Timer, // 
     anim_attack_timer: Timer, // start once player presses attack. only jumps can interrupt the attack. timer property of playerbundle sets the animation speed.
     anim_jump_timer: Timer
+}
+
+#[derive(Default)]
+struct StaticEntities {
+    handles: HashMap<StaticEntityId, Entity>,
 }
 
 #[derive(Default)]
@@ -469,6 +482,7 @@ pub fn run() {
 //        .init_resource::<Points>()
         .init_resource::<ActionDesc>()
         .init_resource::<SpriteHandles>()
+        .init_resource::<StaticEntities>()
         .init_resource::<AtlasHandles>()
         .init_resource::<Vec<MovementDir>>()
         .insert_resource(WindowDescriptor {
@@ -607,22 +621,27 @@ fn load_resources(
 // runs before all other graphics systems
 fn init_camera(
     mut commands: Commands,
+    mut static_entities: ResMut<StaticEntities>,
 ) {
     // ui camera
-    commands.spawn_bundle(UiCameraBundle::default());
+    let ui_id = commands.spawn_bundle(UiCameraBundle::default()).id();
     // orthographic camera for perspective, clipping, etc
-    commands.spawn_bundle(Camera2dBundle {
+    let game_id = commands.spawn_bundle(Camera2dBundle {
         query_marker: Camera2d,
         ortho_bundle: OrthographicCameraBundle::new_2d()
-    })
-    .insert(
-        RigidBody::Dynamic
-    )
-    .insert(
-        Velocity::from_linear(Vec3::X * 0.0)
-    );
-//    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
-    println!("Init cameras!");
+        })
+        .insert(
+            RigidBody::Dynamic
+        )
+        .insert(
+            Velocity::from_linear(Vec3::X * 0.0)
+        )
+        .id();
+
+    println!("Initialized cameras!");
+
+    static_entities.handles.insert(StaticEntityId::CameraUi, ui_id );
+    static_entities.handles.insert(StaticEntityId::Camera2d, game_id );
 }
 
 
@@ -1141,6 +1160,7 @@ fn init_player(
     atlas_handles: Res<AtlasHandles>,
     texture_atlases: Res<Assets<TextureAtlas>>,
     textures: ResMut<Assets<Texture>>,
+    mut static_entities: ResMut<StaticEntities>,
 //    asset_server: Res<AssetServer>,
     win_size: Res<WinSize>,
 )   {
@@ -1173,7 +1193,7 @@ fn init_player(
         let mut half_tile_offset_y: f32 = TILE_GOALSIZE / 2.0;
 
         // II. spawn player sprite sheet bundle
-        commands
+        let player_id = commands
         .spawn_bundle(PlayerBundle {
             query_marker: Player,
             health: Health(100.0),
@@ -1222,7 +1242,11 @@ fn init_player(
         )
         .insert(
             Acceleration::from_linear(Vec3::X * 0.0)
-        );
+        )
+        .id();
+
+        static_entities.handles.insert(StaticEntityId::Player, player_id);
+
         ///////////////////////////////
         // set program state to 'Ready'
          //////////////////////////////
@@ -1579,58 +1603,45 @@ fn player_input(
 }
 
 fn camera_input(
-    mut query: Query<(Option<&Player>, Option<&Camera2d>, &mut Transform, Option<&mut OrthographicProjection>, &mut Velocity)>,
+    mut query: Query<(&OrthographicProjection, &mut Velocity)>, // for camera
+    mut set: QuerySet<(
+        Query<&Transform, With<Player>>,
+        Query<&Transform, With<Camera2d>>
+    )>,
+    mut static_entities: ResMut<StaticEntities>,
 )   {
-        // take reference of camera and player pos from the query.
-        let mut camera_transform: Option<Mut<Transform>> = None;
-        let mut camera_proj: Option<Mut<OrthographicProjection>> = None;
-        let mut player_transform : Option<Mut<Transform>> = None;
-        let mut camera_velocity: Option<Mut<Velocity>> = None;
+        if let Ok((ortho, mut velocity)) =
+            query.get_mut(*static_entities.handles.get(&StaticEntityId::Camera2d).unwrap()) {
 
-        // TODO: if camera reaches a certain point (left<->right), move camera.
-        for (opt_player, camera, mut transform, mut proj, mut velocity) in query.iter_mut() {
-            if let Some(player) = opt_player {
-                player_transform = Some(transform);
-            } else if let Some(cam) = camera {
-                camera_transform = Some(transform);
-                camera_proj = proj; 
-                camera_velocity = Some(velocity);
+            if let Ok((player_transform)) = set.q0().get(*static_entities.handles.get(&StaticEntityId::Player).unwrap()) {
+                // move camera right
+                if let Ok((cam_transform)) = 
+                    set.q1().get(*static_entities.handles.get(&StaticEntityId::Camera2d).unwrap()) {
+
+                    if (player_transform.translation * Vec3::X) >
+                        (cam_transform.translation * Vec3::X + Vec3::new(ortho.right - 50.0, 0.0, 0.0).abs()) {
+                                velocity.linear = Vec3::new(140.0, 0.0, 0.0);
+                    // move camera left
+                    } else if (player_transform.translation * Vec3::X) <
+                        (cam_transform.translation * Vec3::X - Vec3::new(ortho.left + 50.0, 0.0, 0.0).abs()) {
+                            velocity.linear = Vec3::new(-140.0, 0.0, 0.0);
+                    }
+
+                        // camera is adjusting. determine whether to stop
+                    if velocity.linear * Vec3::X > Vec3::new(0.0, 0.0, 0.0) {
+                        // camera has reached horizontal center. stop.
+                        if cam_transform.translation * Vec3::X >= player_transform.translation * Vec3::X {
+                                velocity.linear = Vec3::new(0.0, 0.0, 0.0);
+                        }
+                    } else if velocity.linear * Vec3::X < Vec3::new(0.0, 0.0, 0.0) {
+                        // cameras has reached horizontal center. stop.
+                        if cam_transform.translation * Vec3::X <= player_transform.translation * Vec3::X {
+                            velocity.linear = Vec3::new(0.0, 0.0, 0.0);
+                        }
+                    }
+                }      
             }
         }
-
-        // closures are awesome.
-        let mut cam_transform = camera_transform.unwrap();
-        let cam_proj= camera_proj.unwrap();
-        let p_transform = player_transform.unwrap();
-        let mut cam_velocity = camera_velocity.unwrap();
-
-        if (p_transform.translation * Vec3::X) > 
-                (cam_transform.translation * Vec3::X + Vec3::new(cam_proj.right - 50.0, 0.0, 0.0).abs()) 
-        {
-            // apply velocity to camera until it is centered.
-                cam_velocity.linear = Vec3::new(100.0, 0.0, 0.0);
-
-        } else if p_transform.translation * Vec3::X <
-                    (cam_transform.translation * Vec3::X - Vec3::new(cam_proj.left + 50.0, 0.0, 0.0).abs()) {
-
-            // apply velocity to camera until it is centered.
-            cam_velocity.linear = Vec3::new(-100.0, 0.0, 0.0);
-        }
-
-        // camera is adjusting
-        if cam_velocity.linear * Vec3::X > Vec3::new(0.0, 0.0, 0.0) {
-            // camera has reached horizontal center. stop.
-            if cam_transform.translation * Vec3::X >= p_transform.translation * Vec3::X {
-                cam_velocity.linear = Vec3::new(0.0, 0.0, 0.0);
-            }
-        } else if cam_velocity.linear * Vec3::X < Vec3::new(0.0, 0.0, 0.0) {
-            // cameras has reached horizontal center. stop.
-            if cam_transform.translation * Vec3::X <= p_transform.translation * Vec3::X {
-                cam_velocity.linear = Vec3::new(0.0, 0.0, 0.0);
-            }
-        }
-
-
 }
 
 // both player and hostile projectiles.
