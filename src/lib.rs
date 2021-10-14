@@ -331,12 +331,9 @@ struct TexSize {
 }
 
 struct IsPlayer(bool);
-struct IsDestructible(bool);
-struct IsStatic(bool);
-
+struct IsMovable(bool);
 #[derive(Debug)]
 struct Health(f32);
-
 #[derive(Debug)]
 struct AttackPoints(f32);
 
@@ -346,6 +343,10 @@ enum Allegiance {
     Yellow=   1702,
     None=     1703
 }
+
+// integrity of a structure.
+#[derive(Debug)]
+struct Integrity(f32);
 
 // Marker Components (empty structs, useful with query filters)
 #[derive(Debug)]
@@ -362,6 +363,8 @@ struct Player;
 struct Creature;
 #[derive(Debug)]
 struct Structure;
+#[derive(Debug)]
+struct Projectile;
 #[derive(Debug)]
 struct Boss;
 
@@ -402,7 +405,7 @@ struct CreatureBundle {
     health: Health,
     attack_points: AttackPoints,
 
-    sprite: SpriteBundle,
+    sprite_sheet: SpriteSheetBundle,
 }
 
 #[derive(Bundle)]
@@ -416,12 +419,21 @@ struct BossBundle {
     sprite: SpriteBundle,
 }
 
+// static objects (immovable platforms f.x.) and dynamic (movable things)
 #[derive(Bundle)]
 struct StructureBundle {
     query_marker: Structure,
 
-    is_destructible: IsDestructible,
-    is_static: IsStatic,
+    integrity: Integrity, // Integrity: 'health points' of structure
+    is_movable: IsMovable,
+
+    #[bundle]
+    sprite: SpriteSheetBundle  
+}
+
+#[derive(Bundle)]
+struct ProjectileBundle {
+    query_marker: Projectile,
 
     #[bundle]
     sprite: SpriteBundle  
@@ -496,7 +508,7 @@ pub fn run() {
             ClearColor( Color::rgba(0.4, 1.0, 0.8, 0.1)) 
         )
         .insert_resource(
-                    Gravity::from(Vec3::new(0.0, -1.81, 0.0))
+                    Gravity::from(Vec3::new(0.0, -9.81, 0.0))
         );
 
     // plugins start
@@ -589,7 +601,7 @@ fn load_resources(
     timers.movement_timer = Timer::from_seconds(0.0, true);
 
     // add timer only. block all movements and jumps until timer complete.
-    timers.anim_attack_timer = Timer::from_seconds(0.9, false);
+    timers.anim_attack_timer = Timer::from_seconds(0.5, false);
     // timer on jump, but anim also dependent on a landing event. if no landing, switch to 'glide anim' after timer ends until landing
     timers.anim_jump_timer = Timer::from_seconds(0.7, false);
 
@@ -906,7 +918,6 @@ fn init_gui(
     Else -> just continue incrementing.
 */
 
-
 fn player_animation(
     time: Res<Time>,
     texture_atlases: Res<Assets<TextureAtlas>>,
@@ -931,42 +942,6 @@ fn player_animation(
             }
         }
 }
-
-fn player_collision(
-    time: Res<Time>,
-    mut timers: ResMut<Timers>,
-    mut events: EventReader<CollisionEvent>,
-    mut query: Query<(Entity, Option<&Player>, &mut AnimStateTuple, &mut Velocity)>,
-)   {
-        for event in events.iter() {
-            match event {
-                CollisionEvent::Started(d1, d2) => {
-                    for (entity, player, mut tuple, mut velocity) in query.iter_mut() {
-                        if let Some(player) = player {
-
-                            if d1.rigid_body_entity().id() == entity.id() {
-                                // is player.
-                                // TODO: check if collision is vertical (downwards)
-                                // if yes, check if collision target is rigid body.
-                                // then
-                                timers.anim_jump_timer.reset();
-                            } else if d2.rigid_body_entity().id() == entity.id() {
-                                // same as above ...
-                                timers.anim_jump_timer.reset();
-                            } else {
-                                // noone of the colliding entities are the player.
-                                // skip ... (for now)
-                            }
-                        }
-                    }
-                }
-                CollisionEvent::Stopped(d1, d2) => {
-                
-                }
-            }
-        }
-}
-
 
 fn load_textures(
     mut sprite_handles: ResMut<SpriteHandles>,
@@ -1413,14 +1388,15 @@ fn player_input(
                 timers.anim_jump_timer.tick( time.delta() );
                 // TODO; check for attack key just pressed. to initiate jump_attack animation here.
                 // block all movement
-                aborted = true;
                 break;
             } else if timers.anim_jump_timer.finished() {
                 // switch to 'glide anim'
                 tuple.current = Some(AnimState::Glide);
                 *handle_atlas = atlas_handles.player.get( &tuple.current.unwrap() ).unwrap().clone();
-//                vel.linear = Vec3::new(0.0, 0.0, 0.0);
-                aborted = true;
+                let y_move = (vel.linear * Vec3::Y);
+                vel.linear -= y_move;
+                vel.linear += Vec3::new(0.0, -20.0, 0.0);
+                timers.anim_jump_timer.reset();
                 break;
                 // TODO: reset jump_timer on vertical collision in a collision handling system.
             } else {
@@ -1428,13 +1404,11 @@ fn player_input(
 
             if (timers.anim_attack_timer.elapsed_secs() > 0.0) && !timers.anim_attack_timer.finished() {
                 timers.anim_attack_timer.tick( time.delta() );
-                aborted = true;
                 break;
             } else if timers.anim_attack_timer.finished() {
                 // reset timer, and continue as usual.
                 timers.anim_attack_timer.reset();
             } else {
-
             }
             
             if let Some(result) = player {
@@ -1470,8 +1444,7 @@ fn player_input(
                     tuple.current = Some(AnimState::Jump);
                     timers.anim_jump_timer.tick( time.delta() );
                     *handle_atlas = atlas_handles.player.get( &tuple.current.unwrap() ).unwrap().clone();
-                    vel.linear += Vec3::new(0.0, 50.0, 0.0);
-                    aborted = true;
+                    vel.linear += Vec3::new(0.0, 70.0, 0.0);
                     break;
                 } else if keys.just_released(KeyCode::LShift) {
                 }
@@ -1481,7 +1454,6 @@ fn player_input(
                     timers.anim_attack_timer.tick( time.delta() );
                     *handle_atlas = atlas_handles.player.get( &tuple.current.unwrap() ).unwrap().clone();
                     vel.linear = Vec3::new(0.0, 0.0, 0.0);
-                    aborted = true;
                     break;
                 } else if keys.just_released(KeyCode::Space) {
                 }
@@ -1581,7 +1553,6 @@ fn player_input(
                         // decrease lateral velocity to 0.0
                         vel.linear = vel.linear + (vel.linear * Vec3::Y).abs();
                     }
-                } else {
                 }
             }
         }
@@ -1613,11 +1584,12 @@ fn camera_input(
         if let Ok((ortho, mut velocity)) =
             query.get_mut(*static_entities.handles.get(&StaticEntityId::Camera2d).unwrap()) {
 
-            if let Ok((player_transform)) = set.q0().get(*static_entities.handles.get(&StaticEntityId::Player).unwrap()) {
-                // move camera right
+            if let Ok((player_transform)) = 
+                set.q0().get(*static_entities.handles.get(&StaticEntityId::Player).unwrap()) {
+
                 if let Ok((cam_transform)) = 
                     set.q1().get(*static_entities.handles.get(&StaticEntityId::Camera2d).unwrap()) {
-
+                    // move camera right
                     if (player_transform.translation * Vec3::X) >
                         (cam_transform.translation * Vec3::X + Vec3::new(ortho.right - 50.0, 0.0, 0.0).abs()) {
                                 velocity.linear = Vec3::new(140.0, 0.0, 0.0);
@@ -1628,41 +1600,91 @@ fn camera_input(
                     }
 
                         // camera is adjusting. determine whether to stop
-                    if velocity.linear * Vec3::X > Vec3::new(0.0, 0.0, 0.0) {
+                    if velocity.linear * Vec3::X > Vec3::ZERO {
                         // camera has reached horizontal center. stop.
                         if cam_transform.translation * Vec3::X >= player_transform.translation * Vec3::X {
-                                velocity.linear = Vec3::new(0.0, 0.0, 0.0);
+                                velocity.linear = Vec3::ZERO;
                         }
-                    } else if velocity.linear * Vec3::X < Vec3::new(0.0, 0.0, 0.0) {
+                    } else if velocity.linear * Vec3::X < Vec3::ZERO {
                         // cameras has reached horizontal center. stop.
                         if cam_transform.translation * Vec3::X <= player_transform.translation * Vec3::X {
-                            velocity.linear = Vec3::new(0.0, 0.0, 0.0);
+                            velocity.linear = Vec3::ZERO;
                         }
                     }
-                }      
+                }
             }
         }
 }
 
-// both player and hostile projectiles.
-fn projectile_manager(
+
+// spawn, despawn regular enemies and bosses (modified in collision_handler, player_input)
+fn enemy_handler(
+    mut static_entities: ResMut<StaticEntities>,
+    mut query: Query<(&Creature, &mut Velocity, &mut Transform)>, // get StaticEntityId, checking if boss exists here.
+    mut commands: Commands,
+)   {
+
+}
+
+// spawn, despawn structures ( modified in collision_handler)
+fn structure_handler(
+    mut static_entities: ResMut<StaticEntities>,
+    mut query: Query<(&Structure, &mut Velocity, &mut Transform, &mut Integrity)>,
+    mut commands: Commands,
+)   {
+
+}
+
+// animate, despawn projectiles ( spawned in player_input )
+fn projectile_handler(
     time: Res<Time>,
     mut actions: ResMut<ActionDesc>,
     keys: Res<Input<KeyCode>>,
-    mut query: Query<(Option<&Player>, &mut TextureAtlasSprite, &Handle<TextureAtlas>)>,
+    mut query: Query<(&Projectile, &mut Transform)>,
     texture_atlases: Res<Assets<TextureAtlas>>,
-    mut timers: ResMut<Timers>
+    mut timers: ResMut<Timers>,
 )   {
-        for (player, mut sprite, texture_atlas_handle) in query.iter_mut() {
-            // TODO: condition: if animation = throw, continue, else break.
-            // -> activate throw only on just_pressed.
-            let texture_atlas = texture_atlases.get(texture_atlas_handle).unwrap();
-            // increment the index of texture atlas with each tick
-            sprite.index = ((sprite.index as usize + 1) % texture_atlas.textures.len()) as u32;
+        // iter through existing spawned, projectiles. (spawned in player_input system)
+        for (projectile, mut transform) in query.iter_mut() {
+            // I. animate
+            // II. check collision or exit from camera bounds.
         }
-        // TODO: switch to other texture atlas containing attack sprites.
-        // HOW: query texture_atlas field of SpriteSheetBundle and assign to it.
-        // TODO: also spawn moving weapon sprite (throw attack).
+}
+
+// determine animation state, health points of entities, etc.
+fn collision_handler(
+    time: Res<Time>,
+    mut timers: ResMut<Timers>,
+    mut events: EventReader<CollisionEvent>,
+    mut query: Query<(Entity, Option<&Player>, &mut AnimStateTuple, &mut Velocity)>,
+)   {
+        for event in events.iter() {
+            match event {
+                CollisionEvent::Started(d1, d2) => {
+                    for (entity, player, mut tuple, mut velocity) in query.iter_mut() {
+                        if let Some(player) = player {
+
+                            if d1.rigid_body_entity().id() == entity.id() {
+                                // is player.
+                                // TODO: check if collision is vertical (downwards)
+                                // if yes, check if collision target is rigid body.
+                                // then
+                                timers.anim_jump_timer.reset();
+                            } else if d2.rigid_body_entity().id() == entity.id() {
+                                // same as above ...
+                                timers.anim_jump_timer.reset();
+                            } else {
+                                // noone of the colliding entities are the player.
+                                // skip ... (for now)
+                            }
+                        }
+                    }
+                }
+                CollisionEvent::Stopped(d1, d2) => {
+                
+                }
+            }
+        }
 }
 
 // Systems end
