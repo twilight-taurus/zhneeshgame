@@ -548,7 +548,8 @@ pub fn run() {
             SystemSet::on_update(AppState::Ready)
                 .with_system(player_input.system().label("input") )
                 .with_system(player_animation.system().after("input") )
-                .with_system(camera_input.system())
+                .with_system(collision_handler.system())
+                .with_system(camera_handler.system())
         )
         .run();
 }
@@ -914,7 +915,7 @@ fn init_gui(
 
 /*
     NEEDS to run AFTER player_input. like this we can save old anim_state, and check if changed in player_input here.
-    If changed -> set sprite.index to 0 (texture_atlas_handle changed in player_input), and update old animState.
+    If changed -> set sprite.index to 0 (texture_atlas_handle changed in player_input), and update old animState, and set new handle to texture atlas.
     Else -> just continue incrementing.
 */
 
@@ -927,12 +928,14 @@ fn player_animation(
 )   {
         timers.gate_timer.tick( time.delta() );
 
-        for (mut timer, player, mut tuple, mut sprite, texture_atlas_handle) in query.iter_mut() {
+        // TODO: access player entity directly, no loop
+        for (mut timer, player, mut tuple, mut sprite, mut texture_atlas_handle) in query.iter_mut() {
             if let Some(result) = player {
                 timer.tick( time.delta() );
                 if timer.finished() {
                     if Some(tuple.old) != Some(tuple.current) {
                         sprite.index = 0;
+                        *texture_atlas_handle = atlas_handles.player.get(&tuple.current.unwrap()).unwrap().clone_weak();
                         tuple.old = tuple.current;
                     }
                     let texture_atlas = texture_atlases.get( (*texture_atlas_handle).clone_weak() ).unwrap();
@@ -1390,9 +1393,9 @@ fn player_input(
                 // block all movement
                 break;
             } else if timers.anim_jump_timer.finished() {
-                // switch to 'glide anim'
+                // switch to 'glide anim' (set atlas handle in player_animation system)
                 tuple.current = Some(AnimState::Glide);
-                *handle_atlas = atlas_handles.player.get( &tuple.current.unwrap() ).unwrap().clone();
+//                *handle_atlas = atlas_handles.player.get( &tuple.current.unwrap() ).unwrap().clone();
                 let y_move = (vel.linear * Vec3::Y);
                 vel.linear -= y_move;
                 vel.linear += Vec3::new(0.0, -20.0, 0.0);
@@ -1443,7 +1446,7 @@ fn player_input(
                 if keys.just_pressed(KeyCode::LShift) {
                     tuple.current = Some(AnimState::Jump);
                     timers.anim_jump_timer.tick( time.delta() );
-                    *handle_atlas = atlas_handles.player.get( &tuple.current.unwrap() ).unwrap().clone();
+//                    *handle_atlas = atlas_handles.player.get( &tuple.current.unwrap() ).unwrap().clone();
                     vel.linear += Vec3::new(0.0, 70.0, 0.0);
                     break;
                 } else if keys.just_released(KeyCode::LShift) {
@@ -1452,7 +1455,7 @@ fn player_input(
                 if keys.just_pressed(KeyCode::Space) {
                     tuple.current = Some(AnimState::Attack);
                     timers.anim_attack_timer.tick( time.delta() );
-                    *handle_atlas = atlas_handles.player.get( &tuple.current.unwrap() ).unwrap().clone();
+//                    *handle_atlas = atlas_handles.player.get( &tuple.current.unwrap() ).unwrap().clone();
                     vel.linear = Vec3::new(0.0, 0.0, 0.0);
                     break;
                 } else if keys.just_released(KeyCode::Space) {
@@ -1573,7 +1576,7 @@ fn player_input(
         // (v.is_empty == true; but no effect on reserved capacity) 
 }
 
-fn camera_input(
+fn camera_handler(
     mut query: Query<(&OrthographicProjection, &mut Velocity)>, // for camera
     mut set: QuerySet<(
         Query<&Transform, With<Player>>,
@@ -1663,22 +1666,35 @@ fn collision_handler(
                 CollisionEvent::Started(d1, d2) => {
                     for (entity, player, mut tuple, mut velocity) in query.iter_mut() {
                         if let Some(player) = player {
-
                             if d1.rigid_body_entity().id() == entity.id() {
-                                // is player.
                                 // TODO: check if collision is vertical (downwards)
                                 // if yes, check if collision target is rigid body.
-                                // then
                                 timers.anim_jump_timer.reset();
+                                if let Some(current) = tuple.current {
+                                    if current == AnimState::Glide || current == AnimState::Jump {
+                                        tuple.old = Some(current);
+                                        // reset to Idle, or 'Fall' animation, if exists...
+                                        tuple.current = Some(AnimState::Idle);
+                                    }
+                                }
                             } else if d2.rigid_body_entity().id() == entity.id() {
                                 // same as above ...
                                 timers.anim_jump_timer.reset();
+                                if let Some(current) = tuple.current {
+                                    if current == AnimState::Glide || current == AnimState::Jump {
+                                        tuple.old = Some(current);
+                                        // reset to Idle, or 'Fall' animation, if exists...
+                                        tuple.current = Some(AnimState::Idle);
+                                    }
+                                }
                             } else {
                                 // noone of the colliding entities are the player.
-                                // skip ... (for now)
+                                // -> TODO: handle collision.
                             }
                         }
                     }
+
+
                 }
                 CollisionEvent::Stopped(d1, d2) => {
                 
